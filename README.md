@@ -11,7 +11,9 @@ curl -fsSL https://raw.githubusercontent.com/wbmartin/herdr-mods/main/install.sh
 ```
 
 This copies `mods/*` into `~/.config/herdr-app/mods/`, makes a `my-main` layout (a copy of the
-installed Herdr's `main` layout with its Files panel pointed at `my-files`) and switches to it.
+installed Herdr's `main` layout with its Files panel pointed at `my-files` and a 2px accent border
+around the window, so its edge shows on dark desktops) and switches to it. To change the border,
+edit `window_border` in `install.sh`.
 Running it again updates everything.
 
 Rollback: `herdr-app do layout.switch '{"name":"main"}'`

@@ -54,5 +54,12 @@ fi
 sed 's/"mod": "files"/"mod": "my-files"/' ~/.config/herdr-app/layouts/my-main.json > ~/.config/herdr-app/layouts/my-main.json.tmp
 mv ~/.config/herdr-app/layouts/my-main.json.tmp ~/.config/herdr-app/layouts/my-main.json
 grep -q '"mod": "my-files"' ~/.config/herdr-app/layouts/my-main.json || fail "could not point my-main at my-files"
+# A window border, so the window's edge shows against dark desktops.
+# Root keys are the 2-space-indented ones: drop any root "border", add ours before "titlebar".
+window_border='"border": { "width": 2, "color": "accent" },'
+awk -v b="  $window_border" '/^  "border": /{next} /^  "titlebar": /{print b} {print}' \
+  ~/.config/herdr-app/layouts/my-main.json > ~/.config/herdr-app/layouts/my-main.json.tmp
+mv ~/.config/herdr-app/layouts/my-main.json.tmp ~/.config/herdr-app/layouts/my-main.json
+grep -qF "  $window_border" ~/.config/herdr-app/layouts/my-main.json || fail "could not add the window border"
 herdr-app do layout.switch '{"name":"my-main"}' >/dev/null
 say "Done: layout my-main. Right-click a file in the Files panel to copy its path."
