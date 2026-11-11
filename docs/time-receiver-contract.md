@@ -38,7 +38,10 @@ Response `200`:
 ## Server-side
 
 - Events are immutable. Reconciliation (assign, unbill, discard, split, merge) appends
-  `reconciled` events through the same store, source `gsd-notes`.
+  `reconciled` events through the same store. They come from the b-loc-utils daily review
+  (`POST /time/eventBatch`, `machine: "b-loc-utils"`, type `reconciled`), with bmux's rules
+  (ADR 0004): a decision addresses an interval `from..to`, not a block; it only re-reads observed
+  time, never creates any; later decisions win in log order; discard is a category, reversible.
 - Blocks are folded on read (per day, in the owner's time zone), never stored. Cache settled days
   only if measured slow.
 - Fold rules and test fixtures: `docs/time-tracker-spec.md` §3 and §6. Both implementations
@@ -51,7 +54,7 @@ Response `200`:
 all machines: `from, to, stream (attention|agent|blocked|pending|idle|discarded), project,
 billable, machine, context` (app names, terminal titles, agent app), plus `pending` totals.
 Read scope only. b-loc-utils aggregates and draws this beside its calendar overlay; it never
-samples activity itself. Other-app window titles are not on the server (the mod keeps them local).
+samples activity itself. Other-app window titles are included (sensitive: mail subjects, document names; the receiver PR needs a security doc).
 
 ## Analysis (first questions to answer)
 
