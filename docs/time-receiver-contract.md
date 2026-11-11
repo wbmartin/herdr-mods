@@ -48,12 +48,39 @@ Response `200`:
   should pass the same JSON fixture table.
 - Flag `|at − receivedTs| > 2 min` as clock skew.
 
+## Realtime hint
+
+Every accepted `POST /time/eventBatch` that adds at least one event emits one hint per touched day
+on the existing `/realtime` feed: entity `timeDay`, entityId `yyyymmdd` (owner's time zone).
+Readers re-read that day; nobody polls. **Read time events** goes in `TokenReadGrantList` so a
+read token hears it.
+
+## Project catalogue
+
+Folded from `projectDefined {projectId, name, billable}`, `projectArchived {projectId}` and
+`projectSeen {projectId, folder, machine}` events (the time module's own; not tech-tracker
+projects). `projectId` is a stable slug, default the repo name; renames change `name` only.
+A seen-but-undefined id lists as `name = projectId`, `billable: false`.
+
+`GET /time/projectList` → `[{projectId, name, billable, archived, firstSeenAt}]`.
+b-loc-utils edits the catalogue by posting `projectDefined` / `projectArchived` events.
+
+## Reconciliation event (from b-loc-utils)
+
+`{v, id (UUIDv7), at (decision time), machine: "b-loc-utils", type: "reconciled", from, to,
+decision: "assign"|"unbill"|"discard", projectId (assign only)}`
+
 ## Read side (for the b-loc-utils daily view, #177)
 
 `GET /time/blockList?day=YYYY-MM-DD&tz=America/New_York` → the folded blocks for that day across
-all machines: `from, to, stream (attention|agent|blocked|pending|idle|discarded), project,
-billable, machine, context` (app names, terminal titles, agent app), plus `pending` totals.
-Read scope only. b-loc-utils aggregates and draws this beside its calendar overlay; it never
+all machines: `from, to, stream (attention|agent|blocked|pending|idle|discarded), projectId,
+projectName, billable` (from the catalogue), `machine, context {app, title, domain, terminalTitle,
+agentApp}`, plus `pending` totals.
+- `attention` never overlaps itself, across machines (later `input` takes over). `agent` and
+  `blocked` overlap attention and each other: draw them as lanes.
+- Per machine: `lastEventAt` and `skewSec` (flag when |at − receivedTs| > 120 s), so a silent
+  machine shows as "not reporting", not idle. Herdr ships every 5 min, so up to 5 min lag is normal.
+b-loc-utils aggregates and draws this beside its calendar overlay; it never
 samples activity itself. Other-app window titles are included (sensitive: mail subjects, document names; the receiver PR needs a security doc).
 
 ## Analysis (first questions to answer)

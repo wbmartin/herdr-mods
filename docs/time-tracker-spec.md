@@ -55,9 +55,15 @@ wall-clock gaps ─┘                                                       └
 
 - **Project id defaults to the git repo name** at the space's folder (`git rev-parse
   --show-toplevel` basename, run on the space's machine). No repo: the space name.
-- A local **mapping file** (`~/.config/herdr-app/data/time-tracker/projects.json`) renames or
-  merges ids and sets `billable`. When the mapping changes, the mod appends a `projectMapped`
-  event so the fold stays reproducible.
+- **The project catalogue lives in gsd-notes**, folded from events (bmux model): `projectDefined
+  {projectId, name, billable}`, `projectArchived {projectId}`. `projectId` is a stable slug
+  (default: the repo name); renaming changes `name`, never the id. b-loc-utils edits it by posting
+  those events; readers get it from `GET /time/projectList` (contract).
+- The mod emits `projectSeen {projectId, folder, machine}` the first time a key appears; the
+  server lists a seen-but-undefined id as a project named after it, `billable: false`.
+- A local **alias file** (`~/.config/herdr-app/data/time-tracker/projects.json`) only maps a key
+  to another `projectId` (merge two repos into one project). When it changes, the mod appends a
+  `projectMapped {key, projectId}` event so the fold stays reproducible. Billable is not set here.
 - Work that doesn't fit a repo (calls, admin, Scouts) is handled in gsd-notes: assigned during
   reconciliation or entered manually there.
 
@@ -77,9 +83,11 @@ below). Every line: `v`, `id` (UUIDv7), `at` (UTC ISO-8601, ms), `machine` (host
 | `space` | `space, name, folder, machine, repo, branch` | `spaces()`; on first sight and change |
 | `agent` | `terminal, space, app, status, turn` | `agents()` status changes |
 | `title` | `terminal, title` | terminal title changes |
-| `app` | `app, title` | frontmost app when Herdr isn't (informational); shipped, title included (§8) |
-| `projectMapped` | `key, project, billable` | mapping file change |
-| `reconciled` | `from, to, decision, project?` | written by gsd-notes, never by the mod |
+| `app` | `app, title, domain?` | frontmost app when Herdr isn't (informational); shipped, title included (§8) |
+| `projectSeen` | `projectId, folder, machine` | first sight of a project key |
+| `projectMapped` | `key, projectId` | alias file change |
+| `reconciled` | `from, to, decision (assign\|unbill\|discard), projectId?` | b-loc-utils daily review, never the mod |
+| `projectDefined` / `projectArchived` | `projectId, name, billable` / `projectId` | catalogue edits from b-loc-utils |
 
 Not captured, ever: terminal contents, typed commands, scrollback, transcripts.
 
@@ -96,7 +104,8 @@ and is reported in the panel, never silently.
 
 ## 6. The fold — two streams
 
-**Attention** (exclusive, one at a time): you, in a project.
+**Attention** (exclusive, one at a time **across all machines**): you, in a project. When two
+machines both show attention, the one with the later `input` takes over from that moment.
 - Accrues to the project of the focused space while Herdr is front and the last `input` is within
   grace. A `focus` change moves it immediately (it's a deliberate click/keystroke in Herdr).
 - Herdr not front → time is **pending**, carrying the `app` events as context ("Outlook 14 m").
