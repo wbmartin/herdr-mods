@@ -61,5 +61,11 @@ awk -v b="  $window_border" '/^  "border": /{next} /^  "titlebar": /{print b} {p
   ~/.config/herdr-app/layouts/my-main.json > ~/.config/herdr-app/layouts/my-main.json.tmp
 mv ~/.config/herdr-app/layouts/my-main.json.tmp ~/.config/herdr-app/layouts/my-main.json
 grep -qF "  $window_border" ~/.config/herdr-app/layouts/my-main.json || fail "could not add the window border"
+# Selected rows (spaces, agents) in accent blue: the stock 9% white barely beats hover.
+window_colors='"colors": { "selected": "#96b2d74d" },'
+awk -v c="  $window_colors" '/^  "colors": /{next} /^  "titlebar": /{print c} {print}' \
+  ~/.config/herdr-app/layouts/my-main.json > ~/.config/herdr-app/layouts/my-main.json.tmp
+mv ~/.config/herdr-app/layouts/my-main.json.tmp ~/.config/herdr-app/layouts/my-main.json
+grep -qF "  $window_colors" ~/.config/herdr-app/layouts/my-main.json || fail "could not add the selected color"
 herdr-app do layout.switch '{"name":"my-main"}' >/dev/null
 say "Done: layout my-main. Right-click a file in the Files panel to copy its path."
