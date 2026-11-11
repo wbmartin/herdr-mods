@@ -18,13 +18,18 @@ Platforms: **Linux (X11) and macOS.** Single user, several machines.
   appends events to a **local log**. Nothing is tracked while Herdr is closed.
 - A **shipper** inside the same mod sends the raw events to a **gsd-notes receiver**
   (`docs/time-receiver-contract.md`). Shipping is idempotent; the local log is never edited.
-- **gsd-notes owns analysis and reconciliation** (assign, split, discard pending time). Herdr shows
-  only today's totals and a pending nudge.
+- **gsd-notes is the store and the fold.** It keeps every shipped event, folds blocks on read and
+  serves them to readers.
+- **b-loc-utils presents it**: the daily view (gsd-notes project 10, #177) aggregates the blocks
+  from gsd-notes with its own calendar overlay (#179). Herdr shows only today's totals and a
+  pending nudge.
+- **Herdr is the only activity writer** (owner, 2026-11-11, on #177 question 1). b-loc-utils does
+  not sample; #178's sampler is this mod.
 
 ```
 Herdr live data ─┐
 OS idle / front app ─┼─► time-tracker mod ─► local JSONL log ─► shipper ─► gsd-notes receiver
-wall-clock gaps ─┘                                                       └─► fold, reconcile, analyse
+wall-clock gaps ─┘                                                       └─► fold ─► b-loc-utils daily view
 ```
 
 ## 3. Principles carried over from bmux
@@ -68,7 +73,7 @@ below). Every line: `v`, `id` (UUIDv7), `at` (UTC ISO-8601, ms), `machine` (host
 | `space` | `space, name, folder, machine, repo, branch` | `spaces()`; on first sight and change |
 | `agent` | `terminal, space, app, status, turn` | `agents()` status changes |
 | `title` | `terminal, title` | terminal title changes |
-| `app` | `app, title` | frontmost app when Herdr isn't (informational) |
+| `app` | `app, title` | frontmost app when Herdr isn't (informational); `title` stays local (§8) |
 | `projectMapped` | `key, project, billable` | mapping file change |
 | `reconciled` | `from, to, decision, project?` | written by gsd-notes, never by the mod |
 
@@ -128,6 +133,10 @@ Retention: local files kept 90 days after they're shipped, then removed. gsd-not
 - Every **5 min** and on Herdr quit: send unshipped events in batches (≤ 500) to the receiver.
   Advance the cursor only on a 2xx; retry with backoff; offline just waits.
 - Idempotent by event `id`; re-sending is harmless.
+- **Other apps' window titles are never shipped** (owner, 2026-11-11, matching #178): the shipper
+  drops `title` from `app` events, so gsd-notes sees the app name only. Mail subjects and document
+  names stay in the local log (90-day retention). Terminal titles (`focus`, `title`) are shipped.
+  An exclusion list (password managers, private browser windows) drops even the local title.
 - Clock skew: the server stamps `receivedAt`; skew between `at` and `receivedAt` beyond 2 min is
   flagged, not corrected.
 
@@ -152,6 +161,9 @@ Billing (clients, rates, invoices), transcripts and search, manual entry in Herd
 in Herdr, tracking while Herdr is closed, Wayland front-app tracking, Windows.
 
 ## 12. Open items
+
+0. Reconciliation home: the b-loc-utils daily view (it already draws the timeline) or the
+   gsd-notes web app. Either way the decision is a `reconciled` event stored in gsd-notes.
 
 1. Dwell before a takeover (bmux ticket 52) — likely unnecessary, since Herdr focus is an
    explicit act rather than inferred from output. Confirm on real data.

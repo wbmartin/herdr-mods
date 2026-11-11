@@ -45,6 +45,14 @@ Response `200`:
   should pass the same JSON fixture table.
 - Flag `|at − receivedTs| > 2 min` as clock skew.
 
+## Read side (for the b-loc-utils daily view, #177)
+
+`GET /time/blockList?day=YYYY-MM-DD&tz=America/New_York` → the folded blocks for that day across
+all machines: `from, to, stream (attention|agent|blocked|pending|idle|discarded), project,
+billable, machine, context` (app names, terminal titles, agent app), plus `pending` totals.
+Read scope only. b-loc-utils aggregates and draws this beside its calendar overlay; it never
+samples activity itself. Other-app window titles are not on the server (the mod keeps them local).
+
 ## Analysis (first questions to answer)
 
 Hours of attention and agent time per project per day/week; agent-to-attention ratio; time
