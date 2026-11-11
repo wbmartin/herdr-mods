@@ -1,3 +1,4 @@
 gpui-kit.d.ts
 jsconfig.json
 .claude/userpreferences.md
+spikes/*.log
