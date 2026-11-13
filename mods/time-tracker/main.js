@@ -5,7 +5,8 @@ import { View, div } from "gpui-kit";
 import { exec, agents, focused, terminals, spaces, window, appHome } from "herdr";
 import * as fs from "fs/promises";
 import { makeEvent, dayKey, slug } from "./lib/events.js";
-import { diff } from "./lib/sampler.js";
+import { diff, inputEvent } from "./lib/sampler.js";
+import { makeProbes } from "./lib/probes.js";
 
 const VERSION = "0.1.0";
 const SAMPLE_MS = 5000;
@@ -25,9 +26,13 @@ export default class TimeTracker extends View {
     this.repos = {}; // "<machine>|<folder>" -> repo name, or null while unknown
     this.seenProjects = new Set();
     this.health = { log: "starting" };
+    this.lastInputMs = null;
+    this.lastFront = null;
     cx.spawn(async (cx) => {
       await fs.mkdir(this.dir, { recursive: true });
       const h = await exec("hostname", ["-s"]);
+      const sess = await exec("sh", ["-c", 'printf %s "${XDG_SESSION_TYPE:-}"']);
+      this.probes = makeProbes(exec, window().platform, sess.stdout.trim());
       this.machine = h.stdout.trim() || "unknown";
       // QuickJS has no Intl: the zone is the name /etc/localtime links to (Linux and macOS).
       const z = await exec("sh", ["-c", "readlink /etc/localtime 2>/dev/null | sed 's#.*/zoneinfo/##'"]);
@@ -103,6 +108,18 @@ export default class TimeTracker extends View {
       const snap = this.snapshot(Date.now());
       const evs = [...diff(this.prev, snap), ...this.projectEvents(snap)];
       this.prev = snap;
+      const input = inputEvent(this.lastInputMs, snap.ms, await this.probes.idleSec(), SAMPLE_MS);
+      if (input) { evs.push(input); this.lastInputMs = snap.ms; }
+      if (snap.herdrFront) {
+        this.lastFront = null;
+      } else {
+        const f = await this.probes.front();
+        const key = f && JSON.stringify([f.app, f.title, f.domain]);
+        if (f && key !== this.lastFront) {
+          evs.push({ type: "app", fields: { app: f.app, title: f.title, domain: f.domain ?? null, excluded: f.excluded }, ms: snap.ms });
+          this.lastFront = key;
+        }
+      }
       if (evs.length) await this.write(evs);
     } catch (e) {
       this.health.log = "error: " + e;
