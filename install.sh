@@ -51,9 +51,11 @@ done
 if [ ! -e ~/.config/herdr-app/layouts/my-main.json ]; then
   herdr-app do layout.clone '{"name":"main","as":"my-main"}' >/dev/null
 fi
-sed 's/"mod": "files"/"mod": "my-files"/' ~/.config/herdr-app/layouts/my-main.json > ~/.config/herdr-app/layouts/my-main.json.tmp
+# The status bar becomes time-tracker: Herdr's status bar plus the tracker, which records while it shows.
+sed -e 's/"mod": "files"/"mod": "my-files"/' -e 's/"mod": "workspace-status"/"mod": "time-tracker"/' ~/.config/herdr-app/layouts/my-main.json > ~/.config/herdr-app/layouts/my-main.json.tmp
 mv ~/.config/herdr-app/layouts/my-main.json.tmp ~/.config/herdr-app/layouts/my-main.json
 grep -q '"mod": "my-files"' ~/.config/herdr-app/layouts/my-main.json || fail "could not point my-main at my-files"
+grep -q '"mod": "time-tracker"' ~/.config/herdr-app/layouts/my-main.json || fail "could not put time-tracker in my-main's status bar"
 # A window border, so the window's edge shows against dark desktops.
 # Root keys are the 2-space-indented ones: drop any root "border", add ours before "titlebar".
 window_border='"border": { "width": 2, "color": "accent" },'

@@ -1,8 +1,9 @@
 // Herdr time tracker: observes what Herdr shows and appends events to a local
 // JSONL log (docs/time-tracker-spec.md). It never folds or totals; gsd-notes does.
 
-import { View, div } from "gpui-kit";
-import { exec, agents, focused, terminals, spaces, window, appHome } from "herdr";
+import { View, div, svg } from "gpui-kit";
+import { h_flex } from "gpui-base";
+import { exec, agents, focused, terminals, spaces, window, appHome, theme, run, keys } from "herdr";
 import * as fs from "fs/promises";
 import { makeEvent, dayKey, slug } from "./lib/events.js";
 import { diff, inputEvent } from "./lib/sampler.js";
@@ -26,6 +27,8 @@ export default class TimeTracker extends View {
     this.repos = {}; // "<machine>|<folder>" -> repo name, or null while unknown
     this.seenProjects = new Set();
     this.health = { log: "starting" };
+    this.hovered = false;
+    this.shownHealth = "";
     this.lastInputMs = null;
     this.lastFront = null;
     cx.spawn(async (cx) => {
@@ -39,8 +42,8 @@ export default class TimeTracker extends View {
       const tz = z.stdout.trim() || null;
       const utcOffsetMin = -new Date().getTimezoneOffset();
       await this.write([{ type: "trackerStarted", fields: { version: VERSION, platform: window().platform, tz, utcOffsetMin, graceSec: GRACE_SEC }, ms: Date.now() }]);
-      await this.tick();
-      cx.timer.every(SAMPLE_MS, () => { this.tick(); });
+      await this.tick(cx);
+      cx.timer.every(SAMPLE_MS, (cx) => { this.tick(cx); });
     });
   }
 
@@ -101,7 +104,7 @@ export default class TimeTracker extends View {
     return out;
   }
 
-  async tick() {
+  async tick(cx) {
     if (this.busy || !this.machine) return;
     this.busy = true;
     try {
@@ -126,6 +129,9 @@ export default class TimeTracker extends View {
     } finally {
       this.busy = false;
     }
+    // Redraw only when what the indicator shows changes (a redraw repaints the window).
+    const sig = this.healthText();
+    if (sig !== this.shownHealth) { this.shownHealth = sig; cx.notify(); }
   }
 
   // One exec per tick and per day file: the mod fs has no appendFile.
@@ -143,7 +149,46 @@ export default class TimeTracker extends View {
     this.health.lastWriteMs = Date.now();
   }
 
+  healthText() {
+    const p = this.probes?.health ?? {};
+    const parts = [`log ${this.health.log}`, `idle ${p.idle ?? "…"}`, `front app ${p.front ?? "…"}`];
+    return parts.join(" · ");
+  }
+
+  healthy() {
+    const p = this.probes?.health ?? {};
+    return this.health.log === "ok" && p.idle === "ok" && (p.front === "ok" || p.front === "unknown");
+  }
+
+  // The palette key as bound (copied from Herdr's workspace-status, v0.1.13).
+  hint() {
+    const mac = window()?.platform === "macos";
+    const mod = { cmd: mac ? "⌘" : "Ctrl+", ctrl: mac ? "⌃" : "Ctrl+", shift: mac ? "⇧" : "Shift+", alt: mac ? "⌥" : "Alt+", option: mac ? "⌥" : "Alt+" };
+    const b = keys().find((k) => k.section === "global" && k.action === "app.palette");
+    const parts = b && b.keys.endsWith("--") ? [...b.keys.slice(0, -2).split("-"), "-"] : b?.keys.split("-");
+    const key = parts && parts.map((p) => mod[p.toLowerCase()] ?? p.toUpperCase()).join("");
+    return key ? `${key}  commands` : "commands";
+  }
+
+  // Herdr's status bar (a copy of workspace-status, v0.1.13) plus the tracker's
+  // dot; hovering the dot shows probe health. No totals here (spec section 9).
   render() {
-    return div().text_size(11).child("time-tracker: " + (this.health.log ?? ""));
+    const t = theme();
+    const space = spaces().find((s) => s.active);
+    const list = agents();
+    const needs = list.filter((a) => a.status === "blocked").length;
+    const label = (icon, text) => h_flex().gap(6).items_center().child(svg(`mods/workspace-chrome/${icon}.svg`).size(13)).child(text);
+    const dot = h_flex().id("time-tracker-dot").gap(6).items_center()
+      .on_hover((on, cx) => { this.hovered = on; cx.notify(); })
+      .when(this.hovered, (el) => el.child(div().text_color(t.dim).child("time tracker: " + this.healthText())))
+      .child(div().size(6).rounded(3).bg(this.healthy() ? t.done : t.working));
+    return h_flex().size_full().px(14).gap(16).items_center().bg(t.chrome).border_t(1).border_color(t.border).text_size(11.8).text_color(t.muted)
+      .child(label(space?.machine ? "server" : "monitor", space?.machine ?? "This computer"))
+      .when(Boolean(space?.branch), (el) => el.child(label("branch", space.branch)))
+      .child(h_flex().gap(6).items_center().child(div().size(6).rounded(3).bg(t.dim)).child(`${list.length} agents`)
+        .when(needs > 0, (el) => el.child(div().text_color(t.blocked).child(`· ${needs} needs you`))))
+      .child(div().flex_1())
+      .child(dot)
+      .child(div().id("palette").text_color(t.dim).on_click(() => run("app.palette")).child(this.hint()));
   }
 }

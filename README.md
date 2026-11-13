@@ -21,6 +21,11 @@ Rollback: `herdr-app do layout.switch '{"name":"main"}'`
 
 ## Mods
 
+- **time-tracker**: Herdr's status bar (a copy of `workspace-status` from v0.1.13) that also records
+  what you and your agents work on to `~/.config/herdr-app/data/time-tracker/events/`, for
+  gsd-notes (spec: `docs/time-tracker-spec.md`). The dot right of the bar is its health; hover it
+  for details. Linux needs `xprintidle`. It records only while it shows, so `my-main` puts it in the
+  status bar.
 - **my-files**: Herdr's Files panel (a copy of `files` from v0.1.13). Right-click a file or folder for
   **Copy full path** / **Copy relative path**. The clipboard uses `pbcopy` on macOS and
   `wl-copy`, `xclip` or `xsel` on Linux.
