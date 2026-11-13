@@ -140,9 +140,15 @@ installed into `~/.claude/settings.json` by `install.sh`), adds the signal.
   token                          the shared Herdr gsd-notes token, 0600, never in git
 ```
 
-Spike first: mod `fs` has no tested `appendFile`. Fallback: append through
-`exec("sh", ["-c", 'printf "%s\n" "$1" >> "$2"', "sh", line, path])`. Reads are capped at 1 MiB,
-so files are per day and read by offset. Local files are kept 90 days after they're shipped.
+Spike (2026-11-13, `spikes/ttspike`, Linux, Herdr 0.1.13): the mod `fs` has `exists, mkdir,
+readFile, readdir, rmdir, unlink, writeFile`, **no `appendFile`**. So each line is appended
+through `exec("sh", ["-c", 'printf "%s\n" "$1" >> "$2"', "sh", line, path])` (~10 ms; a
+single `write` with `O_APPEND`, so the hook and the mod could even share a file safely, but they
+don't). Also found: `exec` costs ~14 ms; `crypto.randomUUID` (v4) and `getRandomValues` exist, so
+UUIDv7 is built from the clock plus `getRandomValues`; `import "websocket"` gives `WebSocket` for
+`/realtime`; `cx.timer.after` exists; `focused().agent` / `agents()[].address` are the same
+`t10`-style address as `HC_TERMINAL_ID`. Reads are capped at 1 MiB, so files are per day.
+Local files are kept 90 days after they're shipped.
 
 ## 8. Shipping
 
