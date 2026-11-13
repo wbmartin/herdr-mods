@@ -52,7 +52,9 @@ gsd-notes' own conventions (migrations, module isolation, grants) decide how it'
 ## Event types
 
 Herdr's observations: spec §5 (`trackerStarted`, `trackerStopped`, `gap`, `input`, `herdrFront`,
-`focus`, `space`, `agent`, `title`, `app`, `projectSeen`, `projectMapped`). Herdr's Claude Code
+`focus`, `space`, `agent`, `terminal`, `app`, `projectSeen`, `projectMapped`). A terminal's
+project is the repo of its live `cwd` (`terminal` events), else its space's name; never the
+space's `folder`. Herdr's Claude Code
 hook: spec §6 (`toolStarted`, `toolLaunched`, `toolEnded`, joined on `toolUseId`; `terminal` is
 `HC_TERMINAL_ID`, the same address as in `agent`/`focus`). From b-loc-utils:
 

@@ -54,13 +54,16 @@ wall-clock gaps ─┘                                                       └
 
 ## 4. Projects
 
-- **Project id defaults to the git repo name** at the space's folder (`git rev-parse
-  --show-toplevel` basename, run on the space's machine). No repo: the space name.
+- **Project id defaults to the git repo name of the terminal's live folder** (its foreground
+  program's cwd; `git rev-parse --show-toplevel` basename, run on the space's machine), slugged.
+  Not the space's folder: that is only where the space was made, and the first live run
+  (2026-11-13) showed it pointing at another repo for most spaces. A terminal outside any repo
+  (`repo: ""`) falls back to its space's name, in the fold.
 - **The project catalogue lives in gsd-notes**, folded from events (bmux model): `projectDefined
   {projectId, name, billable}`, `projectArchived {projectId}`. `projectId` is a stable slug
   (default: the repo name); renaming changes `name`, never the id. b-loc-utils edits it by posting
   those events; readers get it from `GET /time/projectList` (contract).
-- The mod emits `projectSeen {projectId, folder, machine}` the first time a key appears; the
+- The mod emits `projectSeen {projectId, folder, spaceMachine}` the first time a key appears; the
   server lists a seen-but-undefined id as a project named after it, `billable: false`.
 - A local **alias file** (`~/.config/herdr-app/data/time-tracker/projects.json`) only maps a key
   to another `projectId` (merge two repos into one project). When it changes, the mod appends a
@@ -81,11 +84,11 @@ below). Every line: `v`, `id` (UUIDv7), `at` (UTC ISO-8601, ms), `machine` (shor
 | `input` | `idleSec` | OS idle time < sample interval; at most one per 30 s while you're active |
 | `herdrFront` | `active` | `window().active` |
 | `focus` | `space, tab, terminal, program, title, cwd` | `focused()` (+ `panes()`/`terminals()`) |
-| `space` | `space, name, folder, machine, repo, branch` | `spaces()`; on first sight and change |
+| `space` | `space, name, folder, spaceMachine, repo, branch` | `spaces()`; on first sight and change |
 | `agent` | `terminal, space, app, status, turn` | `agents()` status changes |
-| `title` | `terminal, title` | terminal title changes |
+| `terminal` | `terminal, space, cwd, repo, program, title` or `terminal, gone` | `terminals()`: on first sight and when any field changes |
 | `app` | `app, title, domain?` | frontmost app when Herdr isn't (informational); shipped, title included (§8) |
-| `projectSeen` | `projectId, folder, machine` | first sight of a project key |
+| `projectSeen` | `projectId, folder, spaceMachine` | first sight of a project key |
 | `projectMapped` | `key, projectId` | alias file change |
 | `reconciled` | `from, to, decision (assign\|unbill\|discard), projectId?` | b-loc-utils daily review, never the mod |
 | `projectDefined` / `projectArchived` | `projectId, name, billable` / `projectId` | catalogue edits from b-loc-utils |
@@ -170,7 +173,7 @@ from `/realtime`; it never polls. No totals, no timeline, no reconciliation in H
 
 ## 10. Verification
 
-- `node --test mods/time-tracker/test/`: event serialisation, the change-only sampler, title
+- `node --test mods/time-tracker/test/*.test.js`: event serialisation, the change-only sampler, title
   exclusion, the shipper's cursor and retry (against a fake receiver), and the hook's command
   scrubbing (a test that feeds it full commands and checks only the `bin/` label survives).
 - `herdr-app check mods/time-tracker`, then `sh install.sh`.
