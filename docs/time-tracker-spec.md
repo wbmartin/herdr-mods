@@ -1,4 +1,4 @@
-# Herdr time tracker — spec (v0.1, draft)
+# Herdr time tracker — spec (v0.2)
 
 *Draft from the design conversation of 2026-11-11. Harvests the bmux time-tracking work
 (github.com/wbmartin/bmux: `specs/100-initial-spec.md` v3 on `main`, v5 and ADRs 0001/0003/0004
@@ -18,8 +18,8 @@ Platforms: **Linux (X11) and macOS.** Single user, several machines.
   appends events to a **local log**. Nothing is tracked while Herdr is closed.
 - A **shipper** inside the same mod sends the raw events to a **gsd-notes receiver**
   (`docs/time-receiver-contract.md`). Shipping is idempotent; the local log is never edited.
-- **gsd-notes is the store and the fold.** It keeps every shipped event, folds blocks on read and
-  serves them to readers.
+- **gsd-notes is the store and the only fold.** Herdr sends events only: no fold, no totals.
+  gsd-notes keeps every event, folds windows (nightly for closed days, on read for today) and serves them.
 - **b-loc-utils presents it**: the daily view (gsd-notes project 10, #177) aggregates the blocks
   from gsd-notes with its own calendar overlay (#179). Herdr shows only today's totals and a
   pending nudge.
@@ -40,8 +40,9 @@ wall-clock gaps ─┘                                                       └
 
 1. **The log records observations only.** No "focus moved" or "gap opened" conclusions are
    stored. Grace, dwell and thresholds are fold parameters, so changing one re-folds history.
-2. **Blocks are never stored:** `blocks(day) = fold(events)`, a pure function that never reads the
-   clock (takes `asOf`). Reconciliation decisions are events too, addressing a time interval
+2. **The events are the record; windows are a rebuildable cache.** gsd-notes folds them (a pure
+   function that never reads the clock) and may store a closed day's windows, but can always
+   rebuild them from events. Reconciliation decisions are events too, addressing a time interval
    (not a block id), and later decisions win.
 3. **Pending, never silently dropped.** A gap past grace becomes pending, not lost.
 4. **Grace is 5 minutes**; exactly 5:00 is inside.
@@ -70,7 +71,7 @@ wall-clock gaps ─┘                                                       └
 ## 5. What is observed
 
 Sampled every **5 s** by `cx.timer`; an event is written **only on change** (except `input`,
-below). Every line: `v`, `id` (UUIDv7), `at` (UTC ISO-8601, ms), `machine` (hostname), `type`.
+below). Every line: `v`, `id` (UUIDv7), `at` (UTC ISO-8601, ms), `machine` (short hostname, always), `type`.
 
 | type | fields | source |
 |---|---|---|
@@ -99,88 +100,84 @@ Not captured, ever: terminal contents, typed commands, scrollback, transcripts.
 | front app + title | `xprop -root _NET_ACTIVE_WINDOW`, then `xprop -id … WM_CLASS _NET_WM_NAME` | `osascript` via System Events (needs **Accessibility** permission; prompt handled, app name only until granted) |
 
 Wayland: no portable front-app probe. The mod detects it, skips `app`, and says so once.
-A missing probe degrades (no `input` → attention relies on focus changes and Herdr-front only)
+A missing probe degrades (no `input` → human time relies on focus changes and Herdr-front only)
 and is reported in the panel, never silently.
 
-## 6. The fold — two streams
+## 6. Claude Code hook — tool start and end (AI wait)
 
-**Attention** (exclusive, one at a time **across all machines**): you, in a project. When two
-machines both show attention, the one with the later `input` takes over from that moment.
-- Accrues to the project of the focused space while Herdr is front and the last `input` is within
-  grace. A `focus` change moves it immediately (it's a deliberate click/keystroke in Herdr).
-- Herdr not front → time is **pending**, carrying the `app` events as context ("Outlook 14 m").
-  Never auto-attributed.
-- `gap` → **idle**. After a gap, nothing accrues until the next `input`.
-- No `input` for > grace → the block ends at the last `input`; the remainder is pending if
-  something resumes, nothing if the day simply stops (bmux rule).
+Herdr only sees an agent's reported status (working/blocked/done/idle), which cannot tell thinking
+from waiting on a gate. A **Claude Code hook**, owned by this repo (`hooks/claude-time.sh`,
+installed into `~/.claude/settings.json` by `install.sh`), adds the signal.
 
-**Agent time** (parallel, per terminal): agents working for you.
-- Accrues from `agent status=working` to the next non-working status, per terminal, to that
-  space's project. Several can overlap each other and your attention.
-- `blocked` is recorded separately (waiting on you) — a productivity signal in its own right.
+| hook | event written |
+|---|---|
+| `PreToolUse` | `toolStarted {terminal, toolUseId, tool, script?, background}` |
+| `PostToolUse` (foreground) | `toolEnded {terminal, toolUseId, durationMs}` |
+| `PostToolUse` (background launch) | `toolLaunched {terminal, toolUseId, taskId}` |
+| `UserPromptSubmit` carrying `<task-notification>` | `toolEnded {terminal, toolUseId, taskId}` (background end) |
 
-Categories: `attention`, `agent`, `blocked`, `pending`, `idle`, `discarded`; `billable` is a
-property from the mapping, not a category.
-
-The fold lives in a pure JS module (`mods/time-tracker/fold.js`) with no Herdr imports so it
-runs under `node --test`, and gsd-notes can run the same rules (port or share; §10).
+- `terminal` = `HC_TERMINAL_ID` (verified 2026-11-13: equals the `hc` address and Herdr's agent
+  address for the same terminal). Outside Herdr there is no `HC_TERMINAL_ID`, so the hook does nothing.
+- `script` = the repo `bin/` script name when the command runs one (`bin/300-run-tests`).
+  **Never arguments, output or the rest of the command**: the hook drops them before writing.
+- One append per call, nothing else (it runs on every tool call). It writes its **own file**,
+  `events/<day>.hook.jsonl`, so two writers never share a file; the shipper reads both.
+- Untested (spike, gsd-notes #181 comments): interactive mode (a notification may wait for a busy
+  turn; the output file's mtime gives the true end), sub-agents' tool calls, per-call cost.
+- Remote ssh machines: v1 tracks hooks on this machine only; a remote agent's tool calls are not seen.
 
 ## 7. Storage (local)
 
 ```
 ~/.config/herdr-app/data/time-tracker/
-  events/2026-11-11.jsonl    source of truth, local-zone day of `at`
-  projects.json              mapping (yours to edit)
-  outbox.json                shipping cursor: last shipped id per day file
-  token                      gsd-notes API token, 0600, never in git
+  events/2026-11-13.jsonl        the mod's observations, local-zone day of `at`
+  events/2026-11-13.hook.jsonl   the Claude Code hook's tool events
+  projects.json                  alias file (yours to edit)
+  outbox.json                    shipping cursor per file
+  token                          this machine's gsd-notes token, 0600, never in git
 ```
 
 Spike first: mod `fs` has no tested `appendFile`. Fallback: append through
-`exec("sh", ["-c", 'printf "%s\n" "$1" >> "$2"', "sh", line, path])`. Reads are capped at 1 MiB;
-a busy day is ~0.5 MB, so the fold reads days by file and never one big file.
-
-Retention: local files kept 90 days after they're shipped, then removed. gsd-notes keeps forever.
+`exec("sh", ["-c", 'printf "%s\n" "$1" >> "$2"', "sh", line, path])`. Reads are capped at 1 MiB,
+so files are per day and read by offset. Local files are kept 90 days after they're shipped.
 
 ## 8. Shipping
 
 - Every **5 min** and on Herdr quit: send unshipped events in batches (≤ 500) to the receiver.
   Advance the cursor only on a 2xx; retry with backoff; offline just waits.
-- Idempotent by event `id`; re-sending is harmless.
-- **Everything is shipped, window titles included** (owner, 2026-11-11, superseding #178's
-  "local only"): app names and titles of other apps, and terminal titles. Titles can hold mail
-  subjects and document names, so gsd-notes stores sensitive text; this needs a security doc on
-  the receiver's PR. An exclusion list (password managers, private browser windows) blanks the
-  title before it is written, locally and on the server.
-- Clock skew: the server stamps `receivedAt`; skew between `at` and `receivedAt` beyond 2 min is
-  flagged, not corrected.
+- **Machine name on every event and every batch.** `machine` is the short hostname. Each machine
+  has its own token, named after that hostname; the server takes the token's machine as authority
+  and rejects a batch whose `machine` differs (contract).
+- Idempotent by event `id` (UUIDv7); re-sending is harmless.
+- **Everything is shipped, window titles included** (owner, 2026-11-11). Titles are kept forever
+  on the server (owner's risk acceptance, gsd-notes #185). An exclusion list (password managers,
+  private browser windows) blanks the title before it is written.
 
-## 9. Herdr UI (v1, small)
+## 9. Herdr UI — low profile
 
-A sidebar/status block: today's attention and agent totals per project, a **pending** count with
-a link to gsd-notes, probe health (idle/front-app working or not), and last ship time.
-No timeline, no reconciliation here.
+A status indicator only (owner, 2026-11-13). Mouseover shows probe health (idle, front app, hook),
+last ship time, and the pending count **read from gsd-notes** (so the token also has the read
+grant). No totals, no timeline, no reconciliation in Herdr.
 
 ## 10. Verification
 
-- `node --test mods/time-tracker/test/` — the fold. Port the bmux table cases that still apply
-  (focus/grace, pending, sleep→idle, dormant restore, reassignment forward-only, unknown type
-  ignored, out-of-order absorbed, per-day folding, `asOf`) and add the two-stream and Herdr-front
-  cases. A change to the fold needs a test that fails without it.
+- `node --test mods/time-tracker/test/`: event serialisation, the change-only sampler, title
+  exclusion, the shipper's cursor and retry (against a fake receiver), and the hook's command
+  scrubbing (a test that feeds it full commands and checks only the `bin/` label survives).
 - `herdr-app check mods/time-tracker`, then `sh install.sh`.
-- Probes: a manual check on each OS (stated in the ticket), since they can't be unit-tested.
+- Probes and the hook: a manual check on each OS (Linux run here; macOS via
+  `spikes/20261111_125324-mac-probes.sh`).
+- The fold has no tests here: it is not here (§11).
 
-## 11. Out of scope for v1
+## 11. Not in Herdr
 
-Billing (clients, rates, invoices), transcripts and search, manual entry in Herdr, a timeline UI
-in Herdr, tracking while Herdr is closed, Wayland front-app tracking, Windows.
+- **The fold.** Herdr sends events only (owner, 2026-11-13, gsd-notes decision 23). gsd-notes is
+  the only code that turns events into windows: a daily run at 03:00 America/New_York folds
+  yesterday, and today is folded on read. Fold rules, parameters (grace, AI-wait minimum) and the
+  bmux test cases are gsd-notes' (#185); §3 here is the shared understanding, not code.
+- Billing, transcripts, manual entry, tracking while Herdr is closed, Wayland front-app, Windows.
 
 ## 12. Open items
 
-
-1. Dwell before a takeover (bmux ticket 52) — likely unnecessary, since Herdr focus is an
-   explicit act rather than inferred from output. Confirm on real data.
-2. Should agent time on a space you're not attending be shown as "parallel" capacity in analysis?
-   (gsd-notes question.)
-3. Fold location: one JS implementation shared by mod and server, or a Go port in gsd-notes with
-   a shared test-case table (JSON fixtures). Leaning: JSON fixtures, two implementations.
-4. Remote spaces (ssh machines): repo name probed with `exec(..., {on: machine})`; confirm cost.
+1. Remote spaces (ssh machines): repo name probed with `exec(..., {on: machine})`; confirm cost.
+   Remote hooks (§6) are out of v1.

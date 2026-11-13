@@ -1,89 +1,109 @@
-# Time tracker → gsd-notes receiver contract (v0.1, draft)
+# Time tracker → gsd-notes receiver contract (v0.2)
 
-The interface between the Herdr time-tracker mod (`docs/time-tracker-spec.md`) and a new
-gsd-notes module that receives, stores, folds and analyses its events. This is the brief for
-the gsd-notes side; gsd-notes' own conventions (migrations, module isolation, scopes) decide
-how it's built.
+The interface between the Herdr time-tracker mod (`docs/time-tracker-spec.md`), the b-loc-utils
+daily review, and the gsd-notes time module (gsd-notes tech tracker #185). v0.2 takes in the
+gsd-notes review of 2026-11-13 (comments on #177 and #181; gsd-notes decisions 23–26).
+gsd-notes' own conventions (migrations, module isolation, grants) decide how it's built.
 
-## Auth
+## Roles
 
-A gsd-notes API token (`gsdt_…`) with a new scope, e.g. **Write time events**, plus
-**Read time events** for later read-back. One token per machine, named for it; revoke on retire.
+- **Herdr** (one per machine) observes, logs locally and ships events. It never folds and shows
+  no totals (decision 23).
+- **gsd-notes** stores every event and is the only code that folds them into windows.
+- **b-loc-utils** reads windows and the catalogue, and writes `reconciled` and `project*` events.
+
+## Auth and machine identity
+
+- One gsd-notes API token **per machine**, named after its short hostname (`nuc2018`,
+  `brandons-mbp`), plus one for `b-loc-utils`. Revoke a token when its machine is retired.
+- Every event and every batch carries `machine`. **The server takes the machine from the token**
+  (as tenant comes from the JWT) and rejects the batch (`403`) when the body's `machine` differs,
+  so one machine cannot pose as another and a misconfigured token shows up at once.
+- Grants: **Write time events** and **Read time events** (Read in `TokenReadGrantList`).
+  Herdr tokens get both (the indicator reads the pending count). The b-loc-utils token's write is
+  limited to `reconciled` and `project*` types; any activity type from it is rejected.
 
 ## `POST /time/eventBatch`
 
-Body:
-
 ```json
 { "machine": "nuc2018", "trackerVersion": "0.1.0",
-  "eventList": [ { "v": 1, "id": "0193…", "at": "2026-11-11T14:03:05.123Z",
+  "eventList": [ { "v": 1, "id": "0193…", "at": "2026-11-13T14:03:05.123Z",
                    "machine": "nuc2018", "type": "focus", "space": "…", "…": "…" } ] }
 ```
 
-- ≤ 500 events, ≤ 1 MiB.
+- Limits: ≤ 500 events and ≤ 1 MiB per batch; a per-event size cap (gsd-notes sets it);
+  `id` must be a UUIDv7, unique per tenant; `at` bounded (no far future).
 - Each event is stored **verbatim** (JSON) with `id`, `at`, `machine`, `type` as columns and a
-  server `receivedTs`.
+  server `receivedTs`. Events are immutable.
 - **Idempotent on `id`**: a known id is skipped, not an error. Unknown `type`s are stored, not
   rejected (forward compatibility; the fold ignores them).
 - A malformed event is rejected individually; the rest of the batch still lands.
+- Response `200`: `{ "acceptedCount": 498, "duplicateCount": 2, "rejectedList": [ { "id": "…",
+  "reason": "…" } ] }`. `401/403` bad token, grant or machine; `413` too big; `5xx` → the client
+  retries the whole batch later.
+- Every new tenant table ships with the cross-tenant negative test.
 
-Response `200`:
+## Event types
 
-```json
-{ "acceptedCount": 498, "duplicateCount": 2, "rejectedList": [ { "id": "…", "reason": "…" } ] }
-```
+Herdr's observations: spec §5 (`trackerStarted`, `trackerStopped`, `gap`, `input`, `herdrFront`,
+`focus`, `space`, `agent`, `title`, `app`, `projectSeen`, `projectMapped`). Herdr's Claude Code
+hook: spec §6 (`toolStarted`, `toolLaunched`, `toolEnded`, joined on `toolUseId`; `terminal` is
+`HC_TERMINAL_ID`, the same address as in `agent`/`focus`). From b-loc-utils:
 
-`401/403` bad token or scope; `413` too big; `5xx` → client retries the whole batch later.
+- `reconciled {from, to, decision: "assign"|"unbill"|"discard", projectId (assign only)}`;
+  `at` is the decision time.
+- `projectDefined {projectId, name, billable}`, `projectArchived {projectId}`.
 
-## Server-side
+## The fold (gsd-notes)
 
-- Events are immutable. Reconciliation (assign, unbill, discard, split, merge) appends
-  `reconciled` events through the same store. They come from the b-loc-utils daily review
-  (`POST /time/eventBatch`, `machine: "b-loc-utils"`, type `reconciled`), with bmux's rules
-  (ADR 0004): a decision addresses an interval `from..to`, not a block; it only re-reads observed
-  time, never creates any; later decisions win in log order; discard is a category, reversible.
-- Blocks are folded on read (per day, in the owner's time zone), never stored. Cache settled days
-  only if measured slow.
-- Fold rules and test fixtures: `docs/time-tracker-spec.md` §3 and §6. Both implementations
-  should pass the same JSON fixture table.
-- Flag `|at − receivedTs| > 2 min` as clock skew.
+- **Daily run at 03:00 America/New_York** (decision 24): folds yesterday 00:00–24:00, cuts any
+  window that runs past midnight at 00:00, stores yesterday's windows and the state carried into
+  today (focus, agents working). Stored windows are a cache, rebuildable from events.
+- **Today is folded on read** from the carried state plus today's events.
+- A late event, or a decision touching a closed day, re-runs that day (and the next if its
+  carried state changed).
+- **Which day an event belongs to:** activity by its `at`; a `reconciled` event to every day its
+  `from..to` touches (not its `at`); catalogue events to no day.
+- Rules carried from bmux (spec §3): grace 5 min (5:00 inside), pending never dropped, dormant
+  after a Herdr start, reassignment forward-only. A decision addresses an interval, re-reads only
+  observed time, later decisions win, discard is reversible (ADR 0004).
+- **Measures** (decision 25):
+  - `human`: you in a Herdr space (Herdr front, `input` within grace), plus other-app time once
+    confirmed in the review. Exclusive across machines: the later `input` takes over.
+  - `aiWork`: an agent reporting working, minus `aiWait`.
+  - `aiWait`: an agent waiting on a command it started (`toolStarted`→`toolEnded`), background
+    runs included; a minimum duration (e.g. 30 s) is a fold parameter. Not promised until the
+    hook spike holds up in interactive mode.
+  - `aiWaitingOnYou`: agent status `blocked`.
+  - plus `pending`, `idle`, `discarded`.
+- Clock skew: flag `|at − receivedTs| > 120 s` per machine.
 
 ## Realtime hint
 
-Every accepted `POST /time/eventBatch` that adds at least one event emits one hint per touched day
-on the existing `/realtime` feed: entity `timeDay`, entityId `yyyymmdd` (owner's time zone).
-Readers re-read that day; nobody polls. **Read time events** goes in `TokenReadGrantList` so a
-read token hears it.
+Each accepted batch that adds events emits one hint per touched day on `/realtime`: entity
+`timeDay`, entityId `yyyymmdd` (owner's zone). For a `reconciled` event, the days of its interval.
+Readers re-read that day; nobody polls.
 
-## Project catalogue
+## Read side
 
-Folded from `projectDefined {projectId, name, billable}`, `projectArchived {projectId}` and
-`projectSeen {projectId, folder, machine}` events (the time module's own; not tech-tracker
-projects). `projectId` is a stable slug, default the repo name; renames change `name` only.
-A seen-but-undefined id lists as `name = projectId`, `billable: false`.
+- `GET /time/projectList` → `[{projectId, name, billable, archived, firstSeenAt}]`. Folded from
+  catalogue events; a seen-but-undefined id lists as `name = projectId`, `billable: false`.
+  `projectId` is a stable slug (default the repo name); renames change `name` only.
+- `GET /time/blockList?day=YYYY-MM-DD&tz=America/New_York` → the day's windows across all
+  machines: `from, to, stream, projectId, projectName, billable, machine, context {app, title,
+  domain, terminalTitle, agentApp, tool, script}`, plus `pending` totals, and per machine
+  `lastEventAt` and `skewSec` (a silent machine shows as "not reporting", not idle; up to 5 min lag
+  is normal). `human` never overlaps itself; the AI streams overlap it and each other (lanes).
+- Herdr's indicator needs today's pending count: a field of `blockList` or its own endpoint
+  (gsd-notes' call).
 
-`GET /time/projectList` → `[{projectId, name, billable, archived, firstSeenAt}]`.
-b-loc-utils edits the catalogue by posting `projectDefined` / `projectArchived` events.
+## Window titles
 
-## Reconciliation event (from b-loc-utils)
+Shipped and **kept forever** (owner's risk acceptance, on #185), including in the nightly B2
+backups. Herdr blanks titles of excluded apps (password managers, private browser windows) before
+writing; the server keeps no exclusion list of its own.
 
-`{v, id (UUIDv7), at (decision time), machine: "b-loc-utils", type: "reconciled", from, to,
-decision: "assign"|"unbill"|"discard", projectId (assign only)}`
+## Analysis (first questions)
 
-## Read side (for the b-loc-utils daily view, #177)
-
-`GET /time/blockList?day=YYYY-MM-DD&tz=America/New_York` → the folded blocks for that day across
-all machines: `from, to, stream (attention|agent|blocked|pending|idle|discarded), projectId,
-projectName, billable` (from the catalogue), `machine, context {app, title, domain, terminalTitle,
-agentApp}`, plus `pending` totals.
-- `attention` never overlaps itself, across machines (later `input` takes over). `agent` and
-  `blocked` overlap attention and each other: draw them as lanes.
-- Per machine: `lastEventAt` and `skewSec` (flag when |at − receivedTs| > 120 s), so a silent
-  machine shows as "not reporting", not idle. Herdr ships every 5 min, so up to 5 min lag is normal.
-b-loc-utils aggregates and draws this beside its calendar overlay; it never
-samples activity itself. Other-app window titles are included (sensitive: mail subjects, document names; the receiver PR needs a security doc).
-
-## Analysis (first questions to answer)
-
-Hours of attention and agent time per project per day/week; agent-to-attention ratio; time
-`blocked` (agents waiting on you); pending time awaiting reconciliation; context switches per hour.
+Human, AI-work, AI-wait and AI-waiting-on-you hours per project per day/week (SQL sums over stored
+windows); AI-to-human ratio; pending time awaiting reconciliation; context switches per hour.
