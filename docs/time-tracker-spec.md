@@ -90,6 +90,9 @@ below). Every line: `v`, `id` (UUIDv7), `at` (UTC ISO-8601, ms), `machine` (shor
 | `reconciled` | `from, to, decision (assign\|unbill\|discard), projectId?` | b-loc-utils daily review, never the mod |
 | `projectDefined` / `projectArchived` | `projectId, name, billable` / `projectId` | catalogue edits from b-loc-utils |
 
+Free text (`title`, `terminalTitle`, space `name`, `cwd`, `folder`) is **truncated to 512
+characters** before writing, so no event nears the receiver's 4 KiB cap.
+
 Not captured, ever: terminal contents, typed commands, scrollback, transcripts.
 
 ### Platform probes (run through `exec`)
@@ -155,8 +158,9 @@ so files are per day and read by offset. Local files are kept 90 days after they
 ## 9. Herdr UI — low profile
 
 A status indicator only (owner, 2026-11-13). Mouseover shows probe health (idle, front app, hook),
-last ship time, and the pending count **read from gsd-notes** (so the token also has the read
-grant). No totals, no timeline, no reconciliation in Herdr.
+last ship time, and `totals.pending` **read from gsd-notes** `blockList` (so the token also has
+the read grant). It reads only after its own successful ship and on a `timeDay` hint for today
+from `/realtime`; it never polls. No totals, no timeline, no reconciliation in Herdr.
 
 ## 10. Verification
 

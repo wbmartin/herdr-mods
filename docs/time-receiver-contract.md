@@ -10,7 +10,8 @@ gsd-notes' own conventions (migrations, module isolation, grants) decide how it'
 - **Herdr** (one per machine) observes, logs locally and ships events. It never folds and shows
   no totals (decision 23).
 - **gsd-notes** stores every event and is the only code that folds them into windows.
-- **b-loc-utils** reads windows and the catalogue, and writes `reconciled` and `project*` events.
+- **b-loc-utils** reads windows and the catalogue, and writes `reconciled`, `projectDefined` and
+  `projectArchived` events.
 
 ## Auth and machine identity
 
@@ -18,9 +19,14 @@ gsd-notes' own conventions (migrations, module isolation, grants) decide how it'
   fewer tokens; a machine sending the wrong name is an accepted risk).
 - **Every event and every batch carries `machine`**, the sender's short hostname. The server
   trusts it as sent; the token does not name a machine. Several machines send at once.
-- Grants: **Write time events** and **Read time events** (Read in `TokenReadGrantList`).
-  The Herdr token gets both (the indicator reads the pending count). The b-loc-utils token's write is
-  limited to `reconciled` and `project*` types; any activity type from it is rejected.
+- Three grants; what a token may write follows its grants, not which token it is:
+  - **Write time events**: every activity type, including Herdr's `projectSeen` and
+    `projectMapped`, and unknown types. Herdr token.
+  - **Write time decisions**: `reconciled`, `projectDefined`, `projectArchived` only.
+    b-loc-utils token.
+  - **Read time events**: both tokens (in `TokenReadGrantList`).
+  An event whose type the token's grants don't cover is rejected individually (`rejectedList`),
+  not the whole batch.
 
 ## `POST /time/eventBatch`
 
@@ -30,7 +36,8 @@ gsd-notes' own conventions (migrations, module isolation, grants) decide how it'
                    "machine": "nuc2018", "type": "focus", "space": "…", "…": "…" } ] }
 ```
 
-- Limits: ≤ 500 events and ≤ 1 MiB per batch; a per-event size cap (gsd-notes sets it);
+- Limits: ≤ 500 events and ≤ 1 MiB per batch; **≤ 4 KiB per event** (Herdr truncates free text,
+  spec §5, so a real event never reaches it);
   `id` must be a UUIDv7, unique per tenant; `at` bounded (no far future).
 - Each event is stored **verbatim** (JSON) with `id`, `at`, `machine`, `type` as columns and a
   server `receivedTs`. Events are immutable.
@@ -88,13 +95,16 @@ Readers re-read that day; nobody polls.
 - `GET /time/projectList` → `[{projectId, name, billable, archived, firstSeenAt}]`. Folded from
   catalogue events; a seen-but-undefined id lists as `name = projectId`, `billable: false`.
   `projectId` is a stable slug (default the repo name); renames change `name` only.
-- `GET /time/blockList?day=YYYY-MM-DD&tz=America/New_York` → the day's windows across all
+- `GET /time/blockList?day=YYYY-MM-DD` (days are always America/New_York, fixed by the 03:00
+  run; no `tz` parameter) → the day's windows across all
   machines: `from, to, stream, projectId, projectName, billable, machine, context {app, title,
   domain, terminalTitle, agentApp, tool, script}`, plus `pending` totals, and per machine
   `lastEventAt` and `skewSec` (a silent machine shows as "not reporting", not idle; up to 5 min lag
   is normal). `human` never overlaps itself; the AI streams overlap it and each other (lanes).
-- Herdr's indicator needs today's pending count: a field of `blockList` or its own endpoint
-  (gsd-notes' call).
+- `blockList` carries a `totals` object, one figure per measure (`human`, `aiWork`, `aiWait`,
+  `aiWaitingOnYou`, `pending`). Herdr's indicator uses `totals.pending`.
+- **Nothing polls** (owner). Herdr reads today's `blockList` only after its own successful ship
+  and when a `timeDay` hint for today arrives; b-loc-utils on the hint only.
 
 ## Window titles
 
