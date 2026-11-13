@@ -14,13 +14,12 @@ gsd-notes' own conventions (migrations, module isolation, grants) decide how it'
 
 ## Auth and machine identity
 
-- One gsd-notes API token **per machine**, named after its short hostname (`nuc2018`,
-  `brandons-mbp`), plus one for `b-loc-utils`. Revoke a token when its machine is retired.
-- Every event and every batch carries `machine`. **The server takes the machine from the token**
-  (as tenant comes from the JWT) and rejects the batch (`403`) when the body's `machine` differs,
-  so one machine cannot pose as another and a misconfigured token shows up at once.
+- **One Herdr token**, shared by every machine, plus one for `b-loc-utils` (owner, 2026-11-13:
+  fewer tokens; a machine sending the wrong name is an accepted risk).
+- **Every event and every batch carries `machine`**, the sender's short hostname. The server
+  trusts it as sent; the token does not name a machine. Several machines send at once.
 - Grants: **Write time events** and **Read time events** (Read in `TokenReadGrantList`).
-  Herdr tokens get both (the indicator reads the pending count). The b-loc-utils token's write is
+  The Herdr token gets both (the indicator reads the pending count). The b-loc-utils token's write is
   limited to `reconciled` and `project*` types; any activity type from it is rejected.
 
 ## `POST /time/eventBatch`
@@ -39,7 +38,7 @@ gsd-notes' own conventions (migrations, module isolation, grants) decide how it'
   rejected (forward compatibility; the fold ignores them).
 - A malformed event is rejected individually; the rest of the batch still lands.
 - Response `200`: `{ "acceptedCount": 498, "duplicateCount": 2, "rejectedList": [ { "id": "…",
-  "reason": "…" } ] }`. `401/403` bad token, grant or machine; `413` too big; `5xx` → the client
+  "reason": "…" } ] }`. `401/403` bad token or grant; `413` too big; `5xx` → the client
   retries the whole batch later.
 - Every new tenant table ships with the cross-tenant negative test.
 

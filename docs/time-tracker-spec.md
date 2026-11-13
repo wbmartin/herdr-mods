@@ -134,7 +134,7 @@ installed into `~/.claude/settings.json` by `install.sh`), adds the signal.
   events/2026-11-13.hook.jsonl   the Claude Code hook's tool events
   projects.json                  alias file (yours to edit)
   outbox.json                    shipping cursor per file
-  token                          this machine's gsd-notes token, 0600, never in git
+  token                          the shared Herdr gsd-notes token, 0600, never in git
 ```
 
 Spike first: mod `fs` has no tested `appendFile`. Fallback: append through
@@ -145,9 +145,8 @@ so files are per day and read by offset. Local files are kept 90 days after they
 
 - Every **5 min** and on Herdr quit: send unshipped events in batches (≤ 500) to the receiver.
   Advance the cursor only on a 2xx; retry with backoff; offline just waits.
-- **Machine name on every event and every batch.** `machine` is the short hostname. Each machine
-  has its own token, named after that hostname; the server takes the token's machine as authority
-  and rejects a batch whose `machine` differs (contract).
+- **Machine name on every event and every batch:** `machine` is the short hostname, and the
+  server trusts it. One Herdr token is shared by all machines (owner, 2026-11-13).
 - Idempotent by event `id` (UUIDv7); re-sending is harmless.
 - **Everything is shipped, window titles included** (owner, 2026-11-11). Titles are kept forever
   on the server (owner's risk acceptance, gsd-notes #185). An exclusion list (password managers,
